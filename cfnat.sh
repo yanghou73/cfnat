@@ -966,33 +966,43 @@ else
             cd $cfnat_file && ./cfnat -colo $cfnatcolo -addr "$addr:$cfnatport" -port $tport -delay $cfnatdelay -code $code -domain "$domain" -ipnum $ipnum -ips $ips -num $num -random=$random -task $task -tls=$tls
             trap - INT
         ;;
-        7)  
-            kill_cfnat
-            uninstall_cfnat
-            mkdir $cfnat_file
-            site_release
-            site_Architecture
-            colo="SJC,LAX,HKG"
-            echo "colo=${colo}" >> "$config_file"
-            port="1234"
-            echo "port=${port}" >> "$config_file"
-            echo "addr=" >> "$config_file"
-            delay="300"
-            echo "delay=${delay}" >> "$config_file"
-            echo "tport=" >> "$config_file"
-            echo "code=" >> "$config_file"
-            echo "domain=" >> "$config_file"
-            echo "ipnum=" >> "$config_file"
-            echo "ips=" >> "$config_file"
-            echo "num=" >> "$config_file"
-            echo "random=" >> "$config_file"
-            echo "task=" >> "$config_file"
-            echo "tls=" >> "$config_file"
-            echo "github_proxy=" >> "$config_file"
-            auto_update_hour="4"
-            echo "auto_update_hour=${auto_update_hour}" >> "$config_file"
-            echo -e "${red}设置完成后需卸载重装 cfnat 才能生效！"
-            install_cfnat
+        7)
+            clear
+            echo -e "${yellow}手动设置系统架构${re}"
+            echo -e "${red}警告：此操作将卸载 cfnat，重新选择系统/架构后自动重装${re}"
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认继续？(y/N): \033[0m' choice_7
+            # 默认 N（回车即取消），只有明确 Y 才执行；EOF 也安全取消
+            if [ "${choice_7^^}" != "Y" ]; then
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            else
+                kill_cfnat
+                uninstall_cfnat
+                mkdir $cfnat_file
+                site_release
+                site_Architecture
+                colo="SJC,LAX,HKG"
+                echo "colo=${colo}" >> "$config_file"
+                port="1234"
+                echo "port=${port}" >> "$config_file"
+                echo "addr=" >> "$config_file"
+                delay="300"
+                echo "delay=${delay}" >> "$config_file"
+                echo "tport=" >> "$config_file"
+                echo "code=" >> "$config_file"
+                echo "domain=" >> "$config_file"
+                echo "ipnum=" >> "$config_file"
+                echo "ips=" >> "$config_file"
+                echo "num=" >> "$config_file"
+                echo "random=" >> "$config_file"
+                echo "task=" >> "$config_file"
+                echo "tls=" >> "$config_file"
+                echo "github_proxy=" >> "$config_file"
+                auto_update_hour="4"
+                echo "auto_update_hour=${auto_update_hour}" >> "$config_file"
+                echo -e "${red}设置完成后需卸载重装 cfnat 才能生效！"
+                install_cfnat
+            fi
         ;;
         8)
             up_merged
