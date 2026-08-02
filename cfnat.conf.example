@@ -1,0 +1,35 @@
+# cfnat 配置文件（留空项使用默认值）
+# release: 系统（留空自动检测，如 Ubuntu/Debian/Centos/OpenWRT/alpine）
+release=
+# architecture: 架构（留空自动检测，如 amd64/arm64/386/arm/s390x/termux）
+Architecture=
+# colo: 筛选数据中心，多个用逗号隔开（如 SJC,LAX,HKG）
+colo=SJC,LAX,HKG
+# port: 本地监听端口
+port=1234
+# addr: 本地监听IP（默认 0.0.0.0 监听所有接口）
+addr=
+# delay: 有效延迟（毫秒），超过则断开
+delay=300
+# tport: 转发目标端口（对应 cfnat -port，默认 443）
+tport=
+# code: HTTP/HTTPS 响应状态码（默认 200）
+code=
+# domain: 响应状态码检查的域名地址（默认 cloudflaremirrors.com/debian）
+domain=
+# ipnum: 提取的有效IP数量（默认 20）
+ipnum=
+# ips: IP 版本 4 或 6（默认 4）
+ips=
+# num: 目标负载 IP 数量（默认 5）
+num=
+# random: 是否随机生成IP，true/false（默认 true）
+random=
+# task: 并发请求最大协程数（默认 100）
+task=
+# tls: 是否为 TLS 端口，true/false（默认 true）
+tls=
+# github_proxy: GitHub 下载代理前缀（如 https://ghproxy.com/ ），留空直连
+github_proxy=
+# auto_update_hour: 每日自动更新IP库的时间（小时0-23，留空=禁用）
+auto_update_hour=4

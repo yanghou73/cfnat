@@ -1,0 +1,19 @@
+# 用户个性化配置（从 cfnat.conf.example 复制后修改，不上传）
+cfnat.conf
+
+# 运行时产物（install/update 自动下载或生成）
+cfnat
+ips-v4.txt
+ips.txt
+locations.json
+.update_tmp/
+
+# 历史痕迹 / 设计过程文件（不提交到仓库）
+colo.csv
+colo.txt
+colo-linux-amd64
+result.csv
+cfnat.sh.bak.*
+DOCKER-GUIDE.md
+SHELL-DEBUG-GUIDE.md
+TESTING-NOTES.md
