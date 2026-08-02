@@ -149,6 +149,13 @@ docker_cfnat_running() {
     docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'cfnat'
 }
 
+# 校验下载文件有效性：存在且大小 >= 100 字节
+# 防止 curl 把 404 错误页（通常仅十几字节）误判为下载成功
+valid_file() {
+    local f="$1"
+    [ -s "$f" ] && [ "$(stat -c%s "$f" 2>/dev/null || echo 0)" -ge 100 ]
+}
+
 # 安装cfnat
 install_cfnat(){
     if [ -n "$1" ]; then 
@@ -169,20 +176,24 @@ install_cfnat(){
         echo "目录 $cfnat_file 已创建。"
     fi
 
-    # 检测 $cfnat_file/locations.json 是否存在
-    if [ ! -f $cfnat_file/locations.json ]; then
-        # 如果不存在，则使用 curl 下载文件
+    # 检测 $cfnat_file/locations.json 是否存在且有效
+    if ! valid_file $cfnat_file/locations.json; then
+        rm -f $cfnat_file/locations.json
+        # 主源: 090227.xyz
         curl --connect-timeout 10 --max-time 60 -SL https://cf.090227.xyz/locations -o $cfnat_file/locations.json
-        if [ ! -f $cfnat_file/locations.json ]; then
+        if ! valid_file $cfnat_file/locations.json; then
+            rm -f $cfnat_file/locations.json
             # 备用源1: cmliussss 仓库
             curl --connect-timeout 10 --max-time 60 -ksSL https://raw.cmliussss.com/cfnat/locations.json -o $cfnat_file/locations.json
         fi
-        if [ ! -f $cfnat_file/locations.json ]; then
+        if ! valid_file $cfnat_file/locations.json; then
+            rm -f $cfnat_file/locations.json
             # 备用源2: GitHub yanghou73/cfnat 仓库（如配置了 github_proxy 则通过代理下载）
             curl --connect-timeout 10 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors -SL ${github_proxy}https://raw.githubusercontent.com/yanghou73/cfnat/main/locations.json -o $cfnat_file/locations.json
         fi
 
-        if [ ! -f $cfnat_file/locations.json ]; then
+        if ! valid_file $cfnat_file/locations.json; then
+            rm -f $cfnat_file/locations.json
             echo "locations.json 下载失败。"
         else
             echo "locations.json 下载完成。"
@@ -191,9 +202,10 @@ install_cfnat(){
         echo "locations.json 准备就绪。"
     fi
 
-    # 检测 $cfnat_file/cfnat 是否存在
-    if [ ! -f $cfnat_file/cfnat ]; then
-        # 如果不存在，则使用 curl 从 GitHub 仓库 ./build 下载文件
+    # 检测 $cfnat_file/cfnat 是否存在且有效
+    if ! valid_file $cfnat_file/cfnat; then
+        rm -f $cfnat_file/cfnat
+        # 从 GitHub 仓库 ./build 下载文件
         # 仓库地址: https://github.com/yanghou73/cfnat
         # 如配置了 github_proxy，会自动拼接在源链接之前以走代理下载
         if [ ${Architecture} = "termux" ]; then
@@ -201,19 +213,27 @@ install_cfnat(){
         else
             curl --connect-timeout 10 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors -SL ${github_proxy}https://raw.githubusercontent.com/yanghou73/cfnat/main/build/cfnat-linux-${Architecture} -o $cfnat_file/cfnat
         fi
-        chmod +x $cfnat_file/cfnat
-        echo "cfnat主程序 下载完成。"
+        if valid_file $cfnat_file/cfnat; then
+            chmod +x $cfnat_file/cfnat
+            echo "cfnat主程序 下载完成。"
+        else
+            rm -f $cfnat_file/cfnat
+            echo "cfnat主程序 下载失败。"
+        fi
     else
+        chmod +x $cfnat_file/cfnat 2>/dev/null
         echo "cfnat主程序 准备就绪。"
     fi
 
-    # 检测 $cfnat_file/cfnat.conf 是否存在
-    # 不存在则从 GitHub 下载 cfnat.conf.example → cfnat.conf（与二进制版本配套的默认配置）
-    if [ ! -f "$config_file" ]; then
+    # 检测 $cfnat_file/cfnat.conf 是否存在且有效
+    # 不存在/无效则从 GitHub 下载 cfnat.conf.example → cfnat.conf（与二进制版本配套的默认配置）
+    if ! valid_file "$config_file"; then
+        rm -f "$config_file"
         curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors -SL ${github_proxy}https://raw.githubusercontent.com/yanghou73/cfnat/main/cfnat.conf.example -o "$config_file"
-        if [ -f "$config_file" ]; then
+        if valid_file "$config_file"; then
             echo "cfnat.conf 下载完成（请运行菜单5配置个性化参数）。"
         else
+            rm -f "$config_file"
             echo "cfnat.conf 下载失败。"
         fi
     else
@@ -426,17 +446,18 @@ up_merged(){
         ) &
     done
     wait
-    # 统计成功源
+    # 统计成功源（valid_file 过滤 404 错误页等小文件，防止污染合并结果）
     local ok=0
     local files=()
     for src in "${sources[@]}"; do
         local name="${src%%|*}"
-        if [ -s "$tmp_dir/$name.txt" ]; then
+        if valid_file "$tmp_dir/$name.txt"; then
             files+=("$tmp_dir/$name.txt")
             ok=$((ok+1))
             echo -e "  ${green}✓${re} $name ($(wc -l < "$tmp_dir/$name.txt") 行)"
         else
-            echo -e "  ${red}✗${re} $name 下载失败，跳过"
+            rm -f "$tmp_dir/$name.txt"
+            echo -e "  ${red}✗${re} $name 下载失败/无效，跳过"
         fi
     done
 
