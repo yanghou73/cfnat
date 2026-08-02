@@ -958,9 +958,13 @@ else
                 install_cfnat
             elif [ $statecfnat = "${green}运行中" ]; then
                 kill_cfnat
-                delete_cron
             fi
+            # 前台调试：trap INT 让 Ctrl+C 只终止 cfnat，不连带退出脚本
+            # cfnat(SIG_DFL) 收到 SIGINT 停止；bash 捕获后继续返回菜单
+            # 不调 delete_cron：保活任务检测到 cfnat 运行中会自动 exit，不干扰调试
+            trap 'echo -e "\n${yellow}调试已停止，返回菜单...${re}"' INT
             cd $cfnat_file && ./cfnat -colo $cfnatcolo -addr "$addr:$cfnatport" -port $tport -delay $cfnatdelay -code $code -domain "$domain" -ipnum $ipnum -ips $ips -num $num -random=$random -task $task -tls=$tls
+            trap - INT
         ;;
         7)  
             kill_cfnat
