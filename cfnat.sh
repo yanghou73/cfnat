@@ -15,8 +15,8 @@ cfnat_file=$HOME/cfnat
 config_file=$cfnat_file/cfnat.conf
 ps=""
 Androidps=""
-# 筛选数据中心，多个用逗号隔开（对应 cfnat -colo，默认 SJC,LAX,HKG）
-cfnatcolo="SJC,LAX,HKG,KHH,NRT,SEA,FRA,MAD"
+# 筛选数据中心，多个用逗号隔开（对应 cfnat -colo，默认覆盖全球 20 个关键节点）
+cfnatcolo="SJC,LAX,SEA,SFO,EWR,IAD,ORD,HKG,NRT,KHH,TPE,SIN,ICN,FRA,LHR,CDG,AMS,MAD,IST,SYD"
 # 本地监听端口（对应 cfnat -addr 的端口，默认 1234）
 cfnatport="1234"
 # 有效延迟（毫秒），超过则断开（对应 cfnat -delay，默认 300）
@@ -157,6 +157,8 @@ valid_file() {
 }
 
 # 安装cfnat
+# 返回值: 0=成功 1=失败（cfnat主程序或locations.json缺失）
+# cfnat.conf 下载失败可容忍：脚本内置默认变量可正常运行，不返回错误
 install_cfnat(){
     if [ -n "$1" ]; then 
         install curl nohup crontab
@@ -176,6 +178,8 @@ install_cfnat(){
         echo "目录 $cfnat_file 已创建。"
     fi
 
+    local install_ok=1
+
     # 检测 $cfnat_file/locations.json 是否存在且有效
     if ! valid_file $cfnat_file/locations.json; then
         rm -f $cfnat_file/locations.json
@@ -194,7 +198,8 @@ install_cfnat(){
 
         if ! valid_file $cfnat_file/locations.json; then
             rm -f $cfnat_file/locations.json
-            echo "locations.json 下载失败。"
+            echo -e "${red}locations.json 下载失败。${re}"
+            install_ok=0
         else
             echo "locations.json 下载完成。"
         fi
@@ -218,7 +223,9 @@ install_cfnat(){
             echo "cfnat主程序 下载完成。"
         else
             rm -f $cfnat_file/cfnat
-            echo "cfnat主程序 下载失败。"
+            echo -e "${red}cfnat主程序 下载失败。${re}"
+            echo -e "${yellow}请检查网络或在 cfnat.conf 中配置 github_proxy（如 https://ghfast.top/）后重试${re}"
+            install_ok=0
         fi
     else
         chmod +x $cfnat_file/cfnat 2>/dev/null
@@ -227,18 +234,26 @@ install_cfnat(){
 
     # 检测 $cfnat_file/cfnat.conf 是否存在且有效
     # 不存在/无效则从 GitHub 下载 cfnat.conf.example → cfnat.conf（与二进制版本配套的默认配置）
-    if ! valid_file "$config_file"; then
+    # cfnat.conf 用内容检查（含 colo= 即有效）而非 valid_file 大小检查，
+    # 因为用户手写的精简 conf 可能 < 100 字节但仍有效，不应被误删覆盖
+    if ! grep -q '^colo=' "$config_file" 2>/dev/null; then
         rm -f "$config_file"
         curl --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 2 --retry-all-errors -SL ${github_proxy}https://raw.githubusercontent.com/yanghou73/cfnat/main/cfnat.conf.example -o "$config_file"
-        if valid_file "$config_file"; then
+        if grep -q '^colo=' "$config_file" 2>/dev/null; then
             echo "cfnat.conf 下载完成（请运行菜单5配置个性化参数）。"
         else
             rm -f "$config_file"
-            echo "cfnat.conf 下载失败。"
+            echo -e "${yellow}cfnat.conf 下载失败，使用脚本内置默认配置（可运行菜单5调整）${re}"
         fi
     else
         echo "cfnat.conf 准备就绪。"
     fi
+
+    # locations.json 或 cfnat 任一缺失则安装失败
+    if [ "$install_ok" -eq 0 ]; then
+        return 1
+    fi
+    return 0
 }
 
 # 卸载cfnat
@@ -329,7 +344,7 @@ check_cfnat(){
                 auto_update_hour=$(grep '^auto_update_hour=' "$config_file" | cut -d'=' -f2)
             fi
             # conf 不存在时变量保持脚本顶部默认值，不创建conf（由 install_cfnat 从 GitHub 下载 conf.example）
-            cfnatcolo=${colo:-SJC,LAX,HKG}
+            cfnatcolo=${colo:-SJC,LAX,SEA,SFO,EWR,IAD,ORD,HKG,NRT,KHH,TPE,SIN,ICN,FRA,LHR,CDG,AMS,MAD,IST,SYD}
             cfnatport=${port:-1234}
             cfnatdelay=${delay:-300}
             # 留空则使用默认值
@@ -493,8 +508,12 @@ up_merged(){
                 if [ $running -eq 1 ]; then
                     echo -e "${yellow}cfnat 运行中，重启以加载新 IP...${re}"
                     kill_cfnat
-                    go_cfnat
-                    echo -e "${green}cfnat 已重启，新 IP 库已生效${re}"
+                    if go_cfnat; then
+                        echo -e "${green}cfnat 已重启，新 IP 库已生效${re}"
+                    else
+                        echo -e "${red}cfnat 重启失败，请检查日志后手动启动${re}"
+                        rc=1
+                    fi
                 fi
             fi
         fi
@@ -504,80 +523,104 @@ up_merged(){
 }
 
 config_cfnat(){
-    echo "电信 推荐 SJC,LAX"
-    echo "移动/联通 推荐 HKG"
+    local DEFAULT_COLO="SJC,LAX,SEA,SFO,EWR,IAD,ORD,HKG,NRT,KHH,TPE,SIN,ICN,FRA,LHR,CDG,AMS,MAD,IST,SYD"
     # 读取并处理数据中心输入
-    read -p "输入筛选数据中心（多个数据中心用逗号隔开，留空则使用 SJC,LAX,HKG）: " colo
-    colo=${colo:-"SJC,LAX,HKG"}
+    echo -e "${yellow}--- 数据中心(colo) ---${re}"
+    echo "电信 推荐 SJC,LAX,SEA,SFO（美西近距）"
+    echo "移动/联通 推荐 HKG,NRT,KHH,TPE（亚太近距）"
+    echo -e "当前值: ${green}$(grep '^colo=' "$config_file" 2>/dev/null | cut -d'=' -f2)${re}"
+    read -p "输入筛选数据中心（留空使用全球默认集20节点）: " colo
+    # read 会自动 trim 空格，回车/空格都得到空字符串 → 触发默认值
+    if [ -z "$colo" ]; then
+        colo="$DEFAULT_COLO"
+    fi
     colo=${colo^^}
-    # 更新配置文件中的 colo 参数
     if grep -q "^colo=" "$config_file"; then
         sed -i "s/^colo=.*/colo=${colo}/" "$config_file"
     else
         echo "colo=${colo}" >> "$config_file"
     fi
+    echo -e "${green}  ✓ 已设置: ${colo}${re}"
 
     # 读取并处理端口输入
     echo ""
+    echo -e "${yellow}--- 本地监听端口 ---${re}"
+    echo -e "当前值: ${green}$(grep '^port=' "$config_file" 2>/dev/null | cut -d'=' -f2)${re}"
     read -p "输入本地监听端口（默认 1234）: " port
-    port=${port:-1234}
-    # 更新配置文件中的 port 参数
+    if [ -z "$port" ]; then port=1234; fi
     if grep -q "^port=" "$config_file"; then
         sed -i "s/^port=.*/port=${port}/" "$config_file"
     else
         echo "port=${port}" >> "$config_file"
     fi
+    echo -e "${green}  ✓ 已设置: ${port}${re}"
 
     # 读取并处理延迟输入
     echo ""
-    echo "电信 有效延迟推荐 300"
-    echo "移动/联通 有效延迟可尝试 100"
-    read -p "输入有效延迟（毫秒），超过此延迟将断开连接（默认 300）: " delay
-    delay=${delay:-300}
-    # 更新配置文件中的 delay 参数
+    echo -e "${yellow}--- 有效延迟 ---${re}"
+    echo "电信 推荐 300 / 移动联通 可尝试 100"
+    echo -e "当前值: ${green}$(grep '^delay=' "$config_file" 2>/dev/null | cut -d'=' -f2)${re}"
+    read -p "输入有效延迟毫秒（默认 300）: " delay
+    if [ -z "$delay" ]; then delay=300; fi
     if grep -q "^delay=" "$config_file"; then
         sed -i "s/^delay=.*/delay=${delay}/" "$config_file"
     else
         echo "delay=${delay}" >> "$config_file"
     fi
+    echo -e "${green}  ✓ 已设置: ${delay}${re}"
 
     # 读取并处理转发目标端口输入
     echo ""
-    echo "转发目标端口（对应 cfnat -port，Cloudflare 端口，默认 443）"
+    echo -e "${yellow}--- 转发目标端口 ---${re}"
+    echo "对应 cfnat -port，Cloudflare 端口"
+    echo -e "当前值: ${green}$(grep '^tport=' "$config_file" 2>/dev/null | cut -d'=' -f2)${re}"
     read -p "输入转发目标端口（默认 443）: " tport
-    tport=${tport:-443}
-    # 更新配置文件中的 tport 参数
+    if [ -z "$tport" ]; then tport=443; fi
     if grep -q "^tport=" "$config_file"; then
         sed -i "s/^tport=.*/tport=${tport}/" "$config_file"
     else
         echo "tport=${tport}" >> "$config_file"
     fi
+    echo -e "${green}  ✓ 已设置: ${tport}${re}"
 
     # 读取并处理 IP 版本输入
     echo ""
-    echo "IP 版本：4=IPv4，6=IPv6（对应 cfnat -ips，默认 4）"
+    echo -e "${yellow}--- IP 版本 ---${re}"
+    echo "4=IPv4，6=IPv6"
+    echo -e "当前值: ${green}$(grep '^ips=' "$config_file" 2>/dev/null | cut -d'=' -f2)${re}"
     read -p "输入 IP 版本 4 或 6（默认 4）: " ips
-    ips=${ips:-4}
-    # 更新配置文件中的 ips 参数
+    if [ -z "$ips" ]; then ips=4; fi
     if grep -q "^ips=" "$config_file"; then
         sed -i "s/^ips=.*/ips=${ips}/" "$config_file"
     else
         echo "ips=${ips}" >> "$config_file"
     fi
+    echo -e "${green}  ✓ 已设置: ${ips}${re}"
 
     # 读取并处理 GitHub 代理输入
     echo ""
-    echo "GitHub 下载代理（如 https://ghproxy.com/ ），需以 / 结尾，留空则直连"
+    echo -e "${yellow}--- GitHub 代理 ---${re}"
+    echo "如 https://ghfast.top/ ，需以 / 结尾，留空则直连"
+    echo -e "当前值: ${green}$(grep '^github_proxy=' "$config_file" 2>/dev/null | cut -d'=' -f2-)${re}"
     read -p "输入 GitHub 代理 URL（默认留空直连）: " github_proxy
-    # 更新配置文件中的 github_proxy 参数
     if grep -q "^github_proxy=" "$config_file"; then
         sed -i "s|^github_proxy=.*|github_proxy=${github_proxy}|" "$config_file"
     else
         echo "github_proxy=${github_proxy}" >> "$config_file"
     fi
+    echo -e "${green}  ✓ 已设置: ${github_proxy:-直连}${re}"
 
     echo ""
+    echo -e "${yellow}=== 配置摘要 ===${re}"
+    echo "  数据中心: $colo"
+    echo "  监听端口: $port"
+    echo "  有效延迟: ${delay}ms"
+    echo "  目标端口: $tport"
+    echo "  IP版本: IPv$ips"
+    echo "  GitHub代理: ${github_proxy:-直连}"
+    echo ""
     echo -e "${yellow}高级参数（addr/code/domain/ipnum/num/random/task/tls）请直接编辑 $config_file 调整${re}"
+    echo -e "${red}完成配置后需重启cfnat才能生效！${re}"
 }
 
 # 定时更新 IP 库设置（每天定时自动更新并重启）
@@ -649,9 +692,23 @@ kill_cfnat(){
 
 go_cfnat(){
     if [ "$OneclickInstallation" = "${green}一键安装" ]; then
-        install_cfnat
+        if ! install_cfnat; then
+            echo -e "${red}cfnat 安装失败，无法启动${re}"
+            return 1
+        fi
     fi
     check_cfnat
+    # P0: 启动前校验 cfnat 主程序文件存在且有效，避免下载失败后仍尝试启动
+    if ! valid_file "$cfnat_file/cfnat"; then
+        echo -e "${red}cfnat 主程序缺失或无效${re}"
+        echo -e "${yellow}请先运行菜单 1 一键安装 或检查 github_proxy 配置${re}"
+        return 1
+    fi
+    if ! valid_file "$cfnat_file/locations.json"; then
+        echo -e "${red}locations.json 缺失或无效${re}"
+        echo -e "${yellow}请先运行菜单 1 一键安装${re}"
+        return 1
+    fi
     # P1: Docker 版 cfnat 在运行时，不启动脚本版（避免端口冲突+误杀容器进程）
     if docker_cfnat_running; then
         echo -e "${red}端口 $cfnatport 被 Docker 版 cfnat 占用${re}"
@@ -677,10 +734,11 @@ menu_docker(){
         0)
             echo -e "${green}Docker 环境就绪${re}"
             # 严格冲突检测：脚本版 cfnat 在运行则先停止+清 crontab，避免端口冲突
+            local script_running=""
             if [ "$release" = "OpenWRT" ]; then
-                pgrep -f "./cfnat -colo" >/dev/null 2>&1 && local script_running=1
+                pgrep -f "./cfnat -colo" >/dev/null 2>&1 && script_running=1
             else
-                pgrep -x "cfnat" >/dev/null 2>&1 && local script_running=1
+                pgrep -x "cfnat" >/dev/null 2>&1 && script_running=1
             fi
             if [ -n "$script_running" ]; then
                 echo -e "${yellow}检测到脚本版 cfnat 运行中，停止以避免端口冲突...${re}"
@@ -758,14 +816,19 @@ state_cfnat(){
 
 site_release(){
     echo -e "${yellow} 设置系统信息...${re}"
+    echo -e "${yellow} 0. ${re}返回上一级（取消设置）"
     echo -e "${yellow} 1. ${re}alpine"
     echo -e "${yellow} 2. ${re}Centos"
     echo -e "${yellow} 3. ${re}Debian"
     echo -e "${yellow} 4. ${re}Ubuntu"
     echo -e "${yellow} 5. ${re}OpenWRT"
     read -p $'\033[1;91m请输入你的选择（默认 OpenWRT）: \033[0m' choice_release
-    # 根据用户选择赋值给 release 变量
+    # 0 或空（EOF）= 返回上一级，调用方通过 release 为空判断
     case $choice_release in
+        0)
+            release=""
+            return
+            ;;
         1)
             release="alpine"
             ;;
@@ -795,6 +858,7 @@ site_release(){
 
 site_Architecture(){
     echo -e "${yellow} 设置架构信息...${re}"
+    echo -e "${yellow} 0. ${re}返回上一级（取消设置）"
     echo -e "${yellow} 1. ${re}termux （安卓termux）"
     echo -e "${yellow} 2. ${re}386 （老古董 32位x86软路由）"
     echo -e "${yellow} 3. ${re}amd64 （64位x86软路由虚拟机）"
@@ -804,8 +868,11 @@ site_Architecture(){
     echo -e "${yellow} 7. ${re}mips"
     echo -e "${yellow} 8. ${re}mips64"
     read -p $'\033[1;91m请输入你的选择（默认 amd64）: \033[0m' choice_Architecture
-    # 根据用户选择赋值给 release 变量
     case $choice_Architecture in
+        0)
+            Architecture=""
+            return
+            ;;
         1)
             Architecture="termux"
             ;;
@@ -860,8 +927,15 @@ fi
 
 if [ -n "$1" ]; then
     check_cfnat
+    # 保活任务职责：仅"拉起已安装好的 cfnat"，不负责自动安装
+    # 安装是交互行为（需用户确认依赖/代理配置），crontab 无人值守下不该自动安装
+    # 未安装时直接静默 exit，避免无代理时每5分钟循环下载 = 资源浪费
     if [ "$OneclickInstallation" = "${green}一键安装" ]; then
-        install_cfnat
+        exit 1
+    fi
+    # 启动前硬校验：cfnat/locations.json 必须就绪，否则 exit，不做任何下载尝试
+    if ! valid_file "$cfnat_file/cfnat" || ! valid_file "$cfnat_file/locations.json"; then
+        exit 1
     fi
     cfnatcolo=${1^^}
     # 检测配置文件是否存在
@@ -925,7 +999,16 @@ else
         1)
             clear
             if [ "$OneclickInstallation" = "${red}一键卸载" ]; then
-                uninstall_cfnat
+                echo -e "${red}=== 确认卸载 cfnat ===${re}"
+                echo -e "${red}将删除: cfnat 二进制 / cfnat.conf / ips-v4.txt / locations.json${re}"
+                echo -e "${yellow}保留: cfnat.sh（可重新运行安装）${re}"
+                echo -e "${yellow}误入请直接回车返回主菜单${re}"
+                read -p $'\033[1;91m确认卸载？(y/N): \033[0m' choice_1
+                if [ "${choice_1^^}" = "Y" ]; then
+                    uninstall_cfnat
+                else
+                    echo -e "${yellow}已取消，返回主菜单${re}"
+                fi
             else
                 install_cfnat
             fi
@@ -934,37 +1017,84 @@ else
             if [ ! -f "$config_file" ]; then
                 config_cfnat
             fi
-            go_cfnat
-            add_cron
+            if go_cfnat; then
+                add_cron
+            else
+                echo -e "${red}cfnat 启动失败，未注册保活任务${re}"
+                echo -e "${yellow}请解决上述错误（如配置 github_proxy）后重试${re}"
+            fi
         ;;
         3)
-            kill_cfnat
-            delete_cron
+            echo -e "${yellow}=== 确认停止 cfnat ===${re}"
+            echo "将停止 cfnat 进程并清除 crontab 保活/定时任务"
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认停止？(y/N): \033[0m' choice_3
+            if [ "${choice_3^^}" = "Y" ]; then
+                kill_cfnat
+                delete_cron
+            else
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            fi
         ;;
         4)
-            kill_cfnat
-            go_cfnat
-            add_cron
+            echo -e "${yellow}=== 确认重启 cfnat ===${re}"
+            echo "将停止当前 cfnat 进程后重新启动，并刷新 crontab 任务"
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认重启？(y/N): \033[0m' choice_4
+            if [ "${choice_4^^}" = "Y" ]; then
+                kill_cfnat
+                if go_cfnat; then
+                    add_cron
+                else
+                    echo -e "${red}cfnat 重启失败，未注册保活任务${re}"
+                    echo -e "${yellow}请解决上述错误后重试${re}"
+                fi
+            else
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            fi
         ;;
         5)
-            if [ "$OneclickInstallation" = "${green}一键安装" ]; then
-                install_cfnat
+            echo -e "${yellow}=== 配置 cfnat ===${re}"
+            echo "将依次设置: colo/port/delay/tport/ips/github_proxy"
+            echo -e "${yellow}每项直接回车=使用默认值，Ctrl+C 可随时中断返回${re}"
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认进入配置？(Y/n): \033[0m' choice_5
+            # 默认 Y（回车即进入），n/N 取消；EOF 安全取消
+            if [ "${choice_5^^}" = "N" ]; then
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            else
+                if [ "$OneclickInstallation" = "${green}一键安装" ]; then
+                    install_cfnat
+                fi
+                config_cfnat
+                ps="${red}完成配置后需重启cfnat才能生效！"
             fi
-            config_cfnat
-            ps="${red}完成配置后需重启cfnat才能生效！"
         ;;
         6)
+            echo -e "${yellow}=== 调试运行 cfnat ===${re}"
+            echo "将以前台模式启动 cfnat，输出日志到屏幕，Ctrl+C 停止并返回菜单"
             if [ "$OneclickInstallation" = "${green}一键安装" ]; then
-                install_cfnat
+                echo -e "${red}检测到未安装，确认后将先执行一键安装${re}"
             elif [ $statecfnat = "${green}运行中" ]; then
-                kill_cfnat
+                echo -e "${yellow}检测到 cfnat 运行中，确认后将先停止再进入调试${re}"
             fi
-            # 前台调试：trap INT 让 Ctrl+C 只终止 cfnat，不连带退出脚本
-            # cfnat(SIG_DFL) 收到 SIGINT 停止；bash 捕获后继续返回菜单
-            # 不调 delete_cron：保活任务检测到 cfnat 运行中会自动 exit，不干扰调试
-            trap 'echo -e "\n${yellow}调试已停止，返回菜单...${re}"' INT
-            cd $cfnat_file && ./cfnat -colo $cfnatcolo -addr "$addr:$cfnatport" -port $tport -delay $cfnatdelay -code $code -domain "$domain" -ipnum $ipnum -ips $ips -num $num -random=$random -task $task -tls=$tls
-            trap - INT
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认进入调试模式？(y/N): \033[0m' choice_6
+            if [ "${choice_6^^}" != "Y" ]; then
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            else
+                if [ "$OneclickInstallation" = "${green}一键安装" ]; then
+                    install_cfnat
+                elif [ $statecfnat = "${green}运行中" ]; then
+                    kill_cfnat
+                fi
+                # 前台调试：trap INT 让 Ctrl+C 只终止 cfnat，不连带退出脚本
+                # cfnat(SIG_DFL) 收到 SIGINT 停止；bash 捕获后继续返回菜单
+                # 不调 delete_cron：保活任务检测到 cfnat 运行中会自动 exit，不干扰调试
+                trap 'echo -e "\n${yellow}调试已停止，返回菜单...${re}"' INT
+                cd $cfnat_file && ./cfnat -colo $cfnatcolo -addr "$addr:$cfnatport" -port $tport -delay $cfnatdelay -code $code -domain "$domain" -ipnum $ipnum -ips $ips -num $num -random=$random -task $task -tls=$tls
+                trap - INT
+            fi
         ;;
         7)
             clear
@@ -980,38 +1110,99 @@ else
                 uninstall_cfnat
                 mkdir $cfnat_file
                 site_release
-                site_Architecture
-                colo="SJC,LAX,HKG"
-                echo "colo=${colo}" >> "$config_file"
-                port="1234"
-                echo "port=${port}" >> "$config_file"
-                echo "addr=" >> "$config_file"
-                delay="300"
-                echo "delay=${delay}" >> "$config_file"
-                echo "tport=" >> "$config_file"
-                echo "code=" >> "$config_file"
-                echo "domain=" >> "$config_file"
-                echo "ipnum=" >> "$config_file"
-                echo "ips=" >> "$config_file"
-                echo "num=" >> "$config_file"
-                echo "random=" >> "$config_file"
-                echo "task=" >> "$config_file"
-                echo "tls=" >> "$config_file"
-                echo "github_proxy=" >> "$config_file"
-                auto_update_hour="4"
-                echo "auto_update_hour=${auto_update_hour}" >> "$config_file"
-                echo -e "${red}设置完成后需卸载重装 cfnat 才能生效！"
-                install_cfnat
+                # site_release 返回空 = 用户选了 0 返回，中止流程
+                if [ -z "$release" ]; then
+                    echo -e "${yellow}已取消系统选择，返回主菜单${re}"
+                else
+                    site_Architecture
+                    # site_Architecture 返回空 = 用户选了 0 返回，中止流程
+                    if [ -z "$Architecture" ]; then
+                        echo -e "${yellow}已取消架构选择，返回主菜单${re}"
+                    else
+                        colo="SJC,LAX,SEA,SFO,EWR,IAD,ORD,HKG,NRT,KHH,TPE,SIN,ICN,FRA,LHR,CDG,AMS,MAD,IST,SYD"
+                        echo "colo=${colo}" >> "$config_file"
+                        port="1234"
+                        echo "port=${port}" >> "$config_file"
+                        echo "addr=" >> "$config_file"
+                        delay="300"
+                        echo "delay=${delay}" >> "$config_file"
+                        echo "tport=" >> "$config_file"
+                        echo "code=" >> "$config_file"
+                        echo "domain=" >> "$config_file"
+                        echo "ipnum=" >> "$config_file"
+                        echo "ips=" >> "$config_file"
+                        echo "num=" >> "$config_file"
+                        echo "random=" >> "$config_file"
+                        echo "task=" >> "$config_file"
+                        echo "tls=" >> "$config_file"
+                        echo "github_proxy=" >> "$config_file"
+                        auto_update_hour="4"
+                        echo "auto_update_hour=${auto_update_hour}" >> "$config_file"
+                        echo -e "${red}设置完成后需卸载重装 cfnat 才能生效！"
+                        install_cfnat
+                    fi
+                fi
             fi
         ;;
         8)
-            up_merged
+            echo -e "${yellow}=== 更新 IP 库（6源合并去重）===${re}"
+            echo "将并行下载 6 个 IP 源，合并去重后原子写入 ips-v4.txt"
+            if [ $statecfnat = "${green}运行中" ]; then
+                echo -e "${yellow}检测到 cfnat 运行中，更新完成后将自动重启以应用新 IP${re}"
+            fi
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认更新 IP 库？(Y/n): \033[0m' choice_8
+            # 默认 Y（回车即执行），n/N 取消；EOF 安全取消
+            if [ "${choice_8^^}" = "N" ]; then
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            else
+                up_merged
+            fi
         ;;
         9)
-            config_auto_update
+            echo -e "${yellow}=== 定时更新设置 ===${re}"
+            echo "设置每天定时自动下载 IP 库并重启 cfnat"
+            if [ -n "$auto_update_hour" ]; then
+                h2_9=$(printf '%02d' ${auto_update_hour:-4})
+                echo -e "当前: ${green}每天 ${h2_9}:00 执行${re}"
+            else
+                echo -e "当前: ${red}未启用${re}"
+            fi
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认进入设置？(Y/n): \033[0m' choice_9
+            if [ "${choice_9^^}" = "N" ]; then
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            else
+                config_auto_update
+            fi
         ;;
         10)
-            menu_docker
+            echo -e "${yellow}=== Docker 部署 ===${re}"
+            check_docker_env
+            case $? in
+                0)
+                    echo -e "${green}Docker 环境就绪${re}"
+                    ;;
+                1)
+                    echo -e "${red}Docker 环境未安装${re}"
+                    ;;
+                2)
+                    echo -e "${red}Docker 已安装但服务未运行${re}"
+                    ;;
+                3)
+                    echo -e "${red}缺少 docker compose 插件${re}"
+                    ;;
+            esac
+            if [ $statecfnat = "${green}运行中" ]; then
+                echo -e "${yellow}检测到脚本版 cfnat 运行中，部署 Docker 版将停止脚本版并清除 crontab${re}"
+            fi
+            echo -e "${yellow}误入请直接回车返回主菜单${re}"
+            read -p $'\033[1;91m确认继续？(y/N): \033[0m' choice_10
+            if [ "${choice_10^^}" != "Y" ]; then
+                echo -e "${yellow}已取消，返回主菜单${re}"
+            else
+                menu_docker
+            fi
         ;;
         0)
             clear

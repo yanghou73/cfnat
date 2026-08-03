@@ -4,16 +4,8 @@ cfnat.conf
 # 运行时产物（install/update 自动下载或生成）
 cfnat
 ips-v4.txt
-ips.txt
 locations.json
 .update_tmp/
 
-# 历史痕迹 / 设计过程文件（不提交到仓库）
-colo.csv
-colo.txt
-colo-linux-amd64
-result.csv
+# 防御性：脚本备份文件不提交
 cfnat.sh.bak.*
-DOCKER-GUIDE.md
-SHELL-DEBUG-GUIDE.md
-TESTING-NOTES.md

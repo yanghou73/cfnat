@@ -3,8 +3,10 @@
 release=
 # architecture: 架构（留空自动检测，如 amd64/arm64/386/arm/s390x/termux）
 Architecture=
-# colo: 筛选数据中心，多个用逗号隔开（如 SJC,LAX,HKG）
-colo=SJC,LAX,HKG
+# colo: 筛选数据中心，多个用逗号隔开（默认覆盖全球20个关键节点）
+# 推荐: 电信美西(SJC,LAX,SEA,SFO) / 移动联通亚太(HKG,NRT,KHH,TPE)
+# 完整默认集: SJC,LAX,SEA,SFO,EWR,IAD,ORD,HKG,NRT,KHH,TPE,SIN,ICN,FRA,LHR,CDG,AMS,MAD,IST,SYD
+colo=SJC,LAX,SEA,SFO,EWR,IAD,ORD,HKG,NRT,KHH,TPE,SIN,ICN,FRA,LHR,CDG,AMS,MAD,IST,SYD
 # port: 本地监听端口
 port=1234
 # addr: 本地监听IP（默认 0.0.0.0 监听所有接口）
